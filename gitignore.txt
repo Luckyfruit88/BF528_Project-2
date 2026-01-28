@@ -1,0 +1,9 @@
+results/
+refs/
+samples/
+.nextflow*
+.nextflow/
+work/
+*.fa
+*.gz
+*.gtf
