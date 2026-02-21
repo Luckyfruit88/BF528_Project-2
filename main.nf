@@ -34,6 +34,12 @@ process STAR_INDEX {
          --genomeFastaFiles ${fasta} \\
          --sjdbGTFfile ${gtf}
     """
+
+    stub:
+    """
+    mkdir -p star_index
+    touch star_index/Genome
+    """
 }
 
 // 2. FASTQC: Perform quality control on raw sequencing reads
@@ -56,6 +62,17 @@ process FASTQC {
     # Run fastqc on both R1 and R2
     fastqc -t ${task.cpus} ${reads[0]} ${reads[1]}
     """
+
+    stub:
+    """
+    touch ${sample_id}_R1_fastqc.zip ${sample_id}_R2_fastqc.zip
+    cat > ${sample_id}_R1_fastqc.html <<'EOF'
+    <html><body>stub fastqc R1</body></html>
+    EOF
+    cat > ${sample_id}_R2_fastqc.html <<'EOF'
+    <html><body>stub fastqc R2</body></html>
+    EOF
+    """
 }
 
 // 3. GTF_SYMBOL: Parse GTF to create a Gene ID to Symbol mapping file
@@ -75,6 +92,14 @@ process GTF_SYMBOL {
     """
     # Execute the python script you wrote in bin/ directory
     python ${parse_script} --gtf ${gtf} --out gene_id_to_symbol.csv
+    """
+
+    stub:
+    """
+    cat > gene_id_to_symbol.csv <<'EOF'
+    gene_id,gene_symbol
+    GENE1,GENE1
+    EOF
     """
 }
 
@@ -106,6 +131,14 @@ process STAR_ALIGN {
          --outSAMtype BAM Unsorted \\
          2> ${sample_id}.Log.final.out
     """
+
+    stub:
+    """
+    touch ${sample_id}Aligned.out.bam
+    cat > ${sample_id}.Log.final.out <<'EOF'
+    Started job on | stub
+    EOF
+    """
 }
 
 // 5. VERSE: Quantify alignments to gene level features
@@ -126,6 +159,13 @@ process VERSE_COUNT {
     """
     # Run verse with strandedness (-S) or other default options
     verse -S -a ${gtf} -o ${sample_id} ${bam}
+    """
+
+    stub:
+    """
+    cat > ${sample_id}.exon.txt <<'EOF'
+    GENE1\t10
+    EOF
     """
 }
 
@@ -148,6 +188,14 @@ process MERGE_COUNTS {
     # Execute python script to merge all provided count files
     python ${merge_script} --out raw_counts_matrix.csv ${count_files}
     """
+
+    stub:
+    """
+    cat > raw_counts_matrix.csv <<'EOF'
+    gene_id,sample1
+    GENE1,10
+    EOF
+    """
 }
 
 // 7. MULTIQC: Aggregate QC metrics from FastQC and STAR into an HTML report
@@ -166,6 +214,13 @@ process MULTIQC {
     """
     # Run multiqc on current directory (.) and force overwrite (-f)
     multiqc -f .
+    """
+
+    stub:
+    """
+    cat > multiqc_report.html <<'EOF'
+    <html><body>stub multiqc</body></html>
+    EOF
     """
 }
 
@@ -205,10 +260,10 @@ workflow {
     // ---------------------------------------------------------
     // Align reads. Wait for STAR_INDEX to emit its output.
     // The inputs match the definition: tuple(reads), path(index), path(gtf)
-    ALIGN_HARD(align_ch, STAR_INDEX.out.index, gtf_ch)
+    STAR_ALIGN(align_ch, STAR_INDEX.out.index, gtf_ch)
 
-    // Run VERSE quantification on the BAM files produced by ALIGN_HARD
-    VERSE_COUNT(ALIGN_HARD.out.bam, gtf_ch)
+    // Run VERSE quantification on the BAM files produced by STAR_ALIGN
+    VERSE_COUNT(STAR_ALIGN.out.bam, gtf_ch)
 
     // Merge counts. Use .collect() to gather all scatter outputs into a single list
     script_merge_ch = file('bin/merge_counts.py')
@@ -219,7 +274,7 @@ workflow {
     // ---------------------------------------------------------
     // Strip sample_id from the tuples and extract only the actual files
     fastqc_files = FASTQC.out.zips.map { sample_id, files -> files }
-    star_logs    = ALIGN_HARD.out.log.map { sample_id, log -> log }
+    star_logs    = STAR_ALIGN.out.log.map { sample_id, log -> log }
 
     // Mix the two streams of files and collect them into a single list for MultiQC
     multiqc_input = fastqc_files.mix(star_logs).collect()
